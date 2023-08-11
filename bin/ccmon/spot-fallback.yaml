@@ -1,0 +1,174 @@
+name: spot-fallback
+duration: 3h
+# repeatAfter: 5m
+nodeSelector: karpenter.sh/provisioner-name
+deployments:
+  - name: inflate
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+            - key: ccmon
+              operator: In
+              values:
+              - owned
+          topologyKey: kubernetes.io/hostname
+    cpu: 1
+    memory: 1G
+
+provisioners:
+  - name: spot
+    consolidationEnabled: true
+    requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - spot
+        - on-demand
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - c6a.12xlarge
+      - key: karpenter.k8s.aws/instance-cpu
+        operator: In
+        values:
+        - "48"
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - arm64
+        - amd64
+    cpuLimits: 0
+
+  - name: od
+    consolidationEnabled: true
+    requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - c6a.12xlarge
+      - key: karpenter.k8s.aws/instance-cpu
+        operator: In
+        values:
+        - "48"
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - arm64
+        - amd64
+    cpuLimits: 24000
+
+events:
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 10
+
+  - waitEvent:
+      selector: karpenter.sh/provisioner-name=od
+      value:
+        integer: 10
+        operator: eq
+      objectType: node
+
+  - time: 0s
+    provisionerEvent:
+      name: spot
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+          - spot
+          - on-demand
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+          - c6a.12xlarge
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: In
+          values:
+          - "48"
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+          - arm64
+          - amd64
+      cpuLimits: 24000
+  - time: 0s
+    provisionerEvent:
+      name: od
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+          - on-demand
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+          - c6a.12xlarge
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: In
+          values:
+          - "48"
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+          - arm64
+          - amd64
+      cpuLimits: 0
+
+  - waitEvent:
+      selector: karpenter.sh/provisioner-name=spot
+      value:
+        integer: 10
+        operator: eq
+      objectType: node
+
+# events:
+#   - time: 0s
+#     deploymentEvent:
+#       deployment: inflate
+#       replicas: 5000
+#   - time: 4m
+#     deploymentEvent:
+#       deployment: inflate
+#       replicas: 10000
+#   - time: 8m
+#     deploymentEvent:
+#       deployment: inflate
+#       replicas: 15000
+
+  # - waitEvent:
+  #     nodeSelector: karpenter.sh/capacity-type=spot
+  #     value:
+  #       integer: 1500
+  #       operator: gt
+  #     writeTo: nodeCount
+
+
+# Test Steps
+
+# 1. 1500 12xl instances with 15k pods
+#     1. one third on-demand (500)
+#     2. two thirds spot (1000)
+#     3. 15k pods total, 10 pods per node
+#
+# 2. Turn on Consolidation and wait for it to be all spot
+# 3. 2500 16xl instances, with 50k pods
+#     1. 2/5 on-demand
+#     2. 3/5 spot (previous 1500)
+# 4. Wait for it to be full spot
+# 5. Scale down replicas to 21k pods
+# 6. Wait for nodes to be at around 1500 16xl instances
+
+# Test Specs
+
+# 1. 25 Provisioners
+#     1. Some One AZ: us-east-1b
+#     2. Some Four AZ: us-east-1b, us-east-1d, us-east-1e, us-east-1f
+#     3. No Provisioners will have Expiration enabled

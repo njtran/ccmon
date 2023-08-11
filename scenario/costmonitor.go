@@ -61,6 +61,7 @@ func NewCostMonitor(ctx context.Context, client *kubernetes.Clientset, name stri
 		pods:         map[string]*v1.Pod{},
 		nodePrices:   map[string]float64{},
 		log:          f,
+		start: 	      time.Now(),
 		csv:          csv.NewWriter(f),
 		pprov:        pprov,
 	}
@@ -239,6 +240,7 @@ func (c *CostMonitor) removeNode(node *v1.Node) {
 }
 
 func (c *CostMonitor) Start(ctx context.Context, start time.Time) {
+	log.Println("starting cost monitoring after %s", time.Since(start))
 	c.start = start
 	go c.monitorNodes(ctx)
 	go c.monitorPods(ctx)

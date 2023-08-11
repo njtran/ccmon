@@ -10,13 +10,11 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"k8s.io/client-go/util/homedir"
-
 	"github.com/tzneal/ccmon/scenario"
+	"k8s.io/client-go/util/homedir"
 )
 
 func main() {
-
 	fs := flag.NewFlagSet("ccom", flag.ExitOnError)
 	kubeConfig := fs.String("kubeconfig", filepath.Join(homedir.HomeDir(), ".kube", "config"),
 		"absolute path to the kubeconfig file")

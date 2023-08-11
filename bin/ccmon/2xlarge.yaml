@@ -1,10 +1,10 @@
-# 1500 nodes, 20 pods each
-# 30000 pods
-# 22500 pods, nodes = 1125
-# 15000 pods , nodes == 750
-# 7500 pods, nodes == 375
+# 2000 nodes, 20 pods each
+# 40000 pods
+# 30000 pods, 1500 nodes
+# 20000 pods, 1000 nodes
+# 10000 pods, 500 nodes
 
-name: xlarge
+name: 2xlarge
 duration: 12h
 nodeSelector: karpenter.sh/provisioner-name
 deployments:
@@ -55,8 +55,25 @@ events:
     deploymentEvent:
       deployment: inflate
       replicas: 30000
+  - time: 25m
+    deploymentEvent:
+      deployment: inflate
+      replicas: 36000
+  - time: 30m
+    deploymentEvent:
+      deployment: inflate
+      replicas: 40000
   - waitEvent:
       startMonitoring: true
+      value:
+        integer: 2000
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 30000
+  - waitEvent:
       value:
         integer: 1500
         operator: eq
@@ -64,27 +81,18 @@ events:
   - time: 0s
     deploymentEvent:
       deployment: inflate
-      replicas: 22500
+      replicas: 20000
   - waitEvent:
       value:
-        integer: 1125
+        integer: 1000
         operator: eq
       objectType: node
   - time: 0s
     deploymentEvent:
       deployment: inflate
-      replicas: 15000
+      replicas: 10000
   - waitEvent:
       value:
-        integer: 750
-        operator: eq
-      objectType: node
-  - time: 0s
-    deploymentEvent:
-      deployment: inflate
-      replicas: 7500
-  - waitEvent:
-      value:
-        integer: 375
+        integer: 500
         operator: eq
       objectType: node

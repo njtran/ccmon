@@ -6,17 +6,28 @@ import (
 	"log"
 	"time"
 
+	coreapis "github.com/aws/karpenter-core/pkg/apis"
+	"github.com/aws/karpenter-core/pkg/apis/v1alpha5"
+	"github.com/aws/karpenter/pkg/apis"
+	"github.com/samber/lo"
+	"go.uber.org/multierr"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"knative.dev/pkg/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Runner struct {
 	client *kubernetes.Clientset
 	start  time.Time
+	kubeClient client.Client
+	variables map[string]int
 }
 
 func NewRunner(kubeConfig string) (*Runner, error) {
@@ -25,13 +36,29 @@ func NewRunner(kubeConfig string) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := kubernetes.NewForConfig(config)
+	clientSet, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("creating kubernetes client, %w", err)
 	}
+	c, err := client.New(config, client.Options{Scheme: Scheme()})
+	if err != nil {
+		return nil, fmt.Errorf("getting kubernetes client, %w", err)
+	}
+
 	return &Runner{
-		client: client,
+		client: clientSet,
+		kubeClient: c,
+		variables: map[string]int{},
 	}, nil
+}
+
+func Scheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	// register karpenter-core CRDs
+	lo.Must0(coreapis.AddToScheme(scheme))
+	// register karpenter CRDs
+	lo.Must0(apis.AddToScheme(scheme))
+	return scheme
 }
 
 func (r *Runner) Execute(ctx context.Context, scen *Scenario) error {
@@ -44,41 +71,110 @@ func (r *Runner) Execute(ctx context.Context, scen *Scenario) error {
 			return fmt.Errorf("creating deployment %s, %w", dep.Name, err)
 		}
 	}
+	log.Println("creating provisioners")
+	for _, prov := range scen.Provisioners {
+		p := createProvisioner(prov)
+		if err := r.Apply(ctx, p); err != nil {
+			return fmt.Errorf("creating provisioner %s, %w", prov.Name, err)
+		}
+	}
 
 	cm, err := NewCostMonitor(ctx, r.client, scen.Name, scen.NodeSelector)
 	if err != nil {
 		return fmt.Errorf("creating cost monitor, %w", err)
 	}
 	defer cm.Stop()
-	r.start = time.Now()
-	cm.Start(ctx, r.start)
 
+	r.start = time.Now()
 	r.log("starting scenario")
 	for i := range scen.Events {
-		ev := scen.Events[i]
-		go func() {
-			select {
-			case <-time.After(ev.Time):
-			case <-ctx.Done():
-				return
+		select {
+		case <-time.After(scen.timeDuration):
+		case <-ctx.Done():
+			r.log("interrupted, exiting")
+		default:
+			ev := scen.Events[i]
+			if ev.ProvisionerEvent != nil || ev.DeploymentEvent != nil {
+				go func() {
+					select {
+					case <-time.After(*ev.durationTime):
+					case <-ctx.Done():
+						return
+					}
+					r.execute(ctx, ev)
+				}()
+				continue
 			}
-			r.execute(ev)
-		}()
-	}
-	select {
-	case <-time.After(scen.Duration):
-	case <-ctx.Done():
-		r.log("interrupted, exiting")
+			startMonitoring, err := r.executeWait(ctx, *ev.WaitEvent)
+			if err != nil {
+				return fmt.Errorf("failed wait, %s", *ev.WaitEvent)
+			}
+			if startMonitoring {
+				r.log("starting cost monitoring")
+				r.start = time.Now()
+				cm.Start(ctx, r.start)
+			}
+		}
 	}
 	return nil
 }
 
+func (r *Runner) executeWait(ctx context.Context, ev WaitEvent) (bool, error) {
+	var valToCompare int
+	if ev.Value.Integer != nil {
+		valToCompare = *ev.Value.Integer
+	} else if ev.Value.Variable != nil {
+		val, ok := r.variables[*ev.Value.Variable]
+		if !ok {
+			return false, fmt.Errorf("getting variable for comparison in wait")
+		}
+		valToCompare = val
+	}
+
+	r.log("starting wait %s", ev.String())
+	i := 1
+	// Max out at 6 hours. (3600 * 6 / 10 = 2160)
+	for i < 2160 {
+		var objectCount int
+		filterOpts := metav1.ListOptions{}
+		if ev.Selector != nil {
+			filterOpts.LabelSelector = *ev.Selector
+		}
+
+		if ev.ObjectType == "node" {
+			if ev.Selector == nil {
+				filterOpts.LabelSelector = "karpenter.sh/provisioner-name"
+			}
+			nodeList, err := r.client.CoreV1().Nodes().List(ctx, filterOpts)
+			if err != nil {
+				return false, fmt.Errorf("getting nodes")
+			}
+			objectCount = len(nodeList.Items)
+		}
+		if ev.ObjectType == "pod" {
+			podList, err := r.client.CoreV1().Pods("").List(ctx, filterOpts)
+			if err != nil {
+				return false, fmt.Errorf("getting pods")
+			}
+			objectCount = len(podList.Items)
+		}
+		if valToCompare == objectCount {
+			r.log("Wait condition achieved, continuing with events after iteration %d", i)
+			return ptr.BoolValue(ev.StartMonitoring), nil
+		}
+		r.log(fmt.Sprintf("Observed count was %d, Target was %d, Sleeping for 10s (%dth iteration)", objectCount, valToCompare, i))
+		time.Sleep(10 * time.Second)
+		i++
+	}
+	return false, nil
+}
+
 func createDeployment(dep Deployment) *appsv1.Deployment {
 	replicas := int32(0)
-	return &appsv1.Deployment{
+	ret := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "default",
-			Name:      dep.K8sName(),
+			Name:      dep.Name,
 			Labels: map[string]string{
 				"ccmon": "owned",
 			},
@@ -87,19 +183,20 @@ func createDeployment(dep Deployment) *appsv1.Deployment {
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app": dep.K8sName(),
+					"app": dep.Name,
 				},
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Namespace: "default",
-					Name:      dep.K8sName(),
+					Name:      dep.Name,
 					Labels: map[string]string{
 						"ccmon": "owned",
-						"app":   dep.K8sName(),
+						"app":   dep.Name,
 					},
 				},
 				Spec: v1.PodSpec{
+					Affinity: dep.Affinity,
 					Containers: []v1.Container{
 						{
 							Name:  "container",
@@ -116,28 +213,99 @@ func createDeployment(dep Deployment) *appsv1.Deployment {
 			},
 		},
 	}
+	return ret
+}
+func createProvisioner(prov Provisioner) *v1alpha5.Provisioner {
+	resources := v1.ResourceList{}
+	if prov.CPULimits != nil {
+		resources[v1.ResourceCPU] = resource.MustParse(*prov.CPULimits)
+	}
+	if prov.MemoryLimits != nil {
+		resources[v1.ResourceMemory] = resource.MustParse(*prov.MemoryLimits)
+	}
+	ret := &v1alpha5.Provisioner{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      prov.Name,
+		},
+		Spec: v1alpha5.ProvisionerSpec{
+			Requirements: prov.Requirements,
+			Labels: prov.Labels,
+			Taints: prov.Taints,
+			Consolidation: &v1alpha5.Consolidation{
+				Enabled: prov.ConsolidationEnabled,
+			},
+			TTLSecondsUntilExpired: prov.TTLSecondsUntilExpired,
+			Limits: &v1alpha5.Limits{
+				Resources: resources,
+			},
+		},
+	}
+	return ret
 }
 
-func (r *Runner) execute(ev Event) {
+func (r *Runner) execute(ctx context.Context, ev Event) error {
+	if ev.DeploymentEvent != nil {
+		return r.executeDeploymentEvent(ctx, *ev.DeploymentEvent)
+	} else if ev.ProvisionerEvent != nil {
+		return r.executeProvisionerEvent(ctx, *ev.ProvisionerEvent)
+	}
+	return nil
+}
+func (r *Runner) executeDeploymentEvent(ctx context.Context, ev DeploymentEvent) error {
 	r.log("scaling %s to %d replicas", ev.Deployment, ev.Replicas)
 
 	for try := 0; try < 100; try++ {
-		s, err := r.client.AppsV1().Deployments("default").GetScale(context.Background(), ev.deployment.K8sName(), metav1.GetOptions{})
+		s, err := r.client.AppsV1().Deployments("default").GetScale(ctx, ev.deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			r.log("unable to get scale for %s, %s", ev.Deployment, err)
-			return
 		}
 
 		s.Spec.Replicas = int32(ev.Replicas)
 		_, err = r.client.AppsV1().Deployments("default").UpdateScale(context.Background(),
-			ev.deployment.K8sName(), s, metav1.UpdateOptions{})
+			ev.deployment.Name, s, metav1.UpdateOptions{})
 		if err == nil {
 			break
 		}
-		if err != nil && try == 99 {
+		if err != nil {
+			if try == 99 {
+				return err
+			}
 			r.log("unable to scale %s, %s", ev.Deployment, err)
 		}
 	}
+	return nil
+}
+
+func (r *Runner) executeProvisionerEvent(ctx context.Context, ev ProvisionerEvent) error {
+	r.log("updating provisioner %s", ev.Name)
+	provisioner := createProvisioner(*ev.provisioner)
+
+	if ev.CPULimits != nil {
+		provisioner.Spec.Limits.Resources[v1.ResourceCPU] = resource.MustParse(*ev.CPULimits)
+	}
+	if ev.MemoryLimits != nil {
+		provisioner.Spec.Limits.Resources[v1.ResourceMemory] = resource.MustParse(*ev.MemoryLimits)
+	}
+	if ev.NodeRequirements != nil {
+		provisioner.Spec.Requirements = ev.NodeRequirements
+	}
+
+	for try := 0; try < 100; try++ {
+		err := r.Apply(ctx, provisioner)
+		if err != nil {
+			r.log("applying provisioner %s, %w", provisioner.Name, err)
+		}
+		if err == nil {
+			break
+		}
+		if err != nil {
+			if try == 99 {
+				return err
+			}
+			r.log("unable to apply provisioner %s, %s", ev.provisioner, err)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) log(s string, args ...interface{}) {
@@ -149,13 +317,53 @@ func (r *Runner) cleanup(scen *Scenario) {
 	ctx := context.Background()
 	gracePeriod := int64(0)
 	for _, dep := range scen.Deployments {
-		err := r.client.AppsV1().Deployments("default").Delete(ctx, dep.K8sName(),
+		err := r.client.AppsV1().Deployments("default").Delete(ctx, dep.Name,
 			metav1.DeleteOptions{
 				TypeMeta:           metav1.TypeMeta{},
 				GracePeriodSeconds: &gracePeriod,
 			})
 		if err != nil {
-			r.log("deleting deployment %s (%s), %w", dep.Name, dep.K8sName(), err)
+			r.log("deleting deployment %s (%s), %w", dep.Name, dep.Name, err)
 		}
 	}
+	for _, prov := range scen.Provisioners {
+		p := createProvisioner(prov)
+		provisioner := &v1alpha5.Provisioner{}
+
+		if err := r.kubeClient.Get(ctx, client.ObjectKeyFromObject(p), provisioner); err != nil {
+			r.log("getting provisioner for cleanup, %w", err)
+			continue
+		}
+
+		err := r.kubeClient.Delete(ctx, provisioner, &client.DeleteOptions{
+			GracePeriodSeconds: &gracePeriod,
+		})
+		if err != nil {
+			r.log("deleting provisioner %s, %w", p.Name, err)
+		}
+	}
+}
+
+
+func (r *Runner) Apply(ctx context.Context, provisioners ...*v1alpha5.Provisioner) error {
+	var multiErr error
+	for _, prov := range provisioners {
+		current := prov.DeepCopy()
+		// Create or Update
+		if err := r.kubeClient.Get(ctx, client.ObjectKeyFromObject(prov), current); err != nil {
+			if errors.IsNotFound(err) {
+				if err := r.kubeClient.Create(ctx, prov); err != nil {
+					multiErr = multierr.Append(multiErr, fmt.Errorf("creating object, %w", err))
+				}
+			} else {
+				multiErr = multierr.Append(multiErr, fmt.Errorf("getting object, %w", err))
+			}
+		} else {
+			prov.SetResourceVersion(current.GetResourceVersion())
+			if err := r.kubeClient.Update(ctx, prov); err != nil {
+				multiErr = multierr.Append(multiErr, fmt.Errorf("updating object, %w", err))
+			}
+		}
+	}
+	return multiErr
 }
