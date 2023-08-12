@@ -39,30 +39,65 @@ events:
     deploymentEvent:
       deployment: inflate
       replicas: 6000
+  - waitEvent:
+      value:
+        integer: 300
+        operator: eq
+      objectType: node
   - time: 5m
     deploymentEvent:
       deployment: inflate
       replicas: 12000
+  - waitEvent:
+      value:
+        integer: 600
+        operator: eq
+      objectType: node
   - time: 10m
     deploymentEvent:
       deployment: inflate
       replicas: 18000
+  - waitEvent:
+      value:
+        integer: 900
+        operator: eq
+      objectType: node
   - time: 15m
     deploymentEvent:
       deployment: inflate
       replicas: 24000
+  - waitEvent:
+      value:
+        integer: 1200
+        operator: eq
+      objectType: node
   - time: 20m
     deploymentEvent:
       deployment: inflate
       replicas: 30000
+  - waitEvent:
+      value:
+        integer: 1500
+        operator: eq
+      objectType: node
   - time: 25m
     deploymentEvent:
       deployment: inflate
       replicas: 36000
+  - waitEvent:
+      value:
+        integer: 1800
+        operator: eq
+      objectType: node
   - time: 30m
     deploymentEvent:
       deployment: inflate
       replicas: 40000
+  - waitEvent:
+      value:
+        integer: 2000
+        operator: eq
+      objectType: node
   - waitEvent:
       startMonitoring: true
       value:

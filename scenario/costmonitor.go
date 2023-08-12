@@ -240,7 +240,7 @@ func (c *CostMonitor) removeNode(node *v1.Node) {
 }
 
 func (c *CostMonitor) Start(ctx context.Context, start time.Time) {
-	log.Println("starting cost monitoring after %s", time.Since(start))
+	log.Println("starting cost monitoring at time %s", start.String())
 	c.start = start
 	go c.monitorNodes(ctx)
 	go c.monitorPods(ctx)

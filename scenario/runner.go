@@ -107,10 +107,10 @@ func (r *Runner) Execute(ctx context.Context, scen *Scenario) error {
 			}
 			startMonitoring, err := r.executeWait(ctx, *ev.WaitEvent)
 			if err != nil {
-				return fmt.Errorf("failed wait, %s", *ev.WaitEvent)
+				return fmt.Errorf("failed wait, %w", err)
 			}
 			if startMonitoring {
-				r.log("starting cost monitoring")
+				r.log("starting cost monitoring after %s", time.Since(r.start))
 				r.start = time.Now()
 				cm.Start(ctx, r.start)
 			}
@@ -132,41 +132,48 @@ func (r *Runner) executeWait(ctx context.Context, ev WaitEvent) (bool, error) {
 	}
 
 	r.log("starting wait %s", ev.String())
-	i := 1
-	// Max out at 6 hours. (3600 * 6 / 10 = 2160)
-	for i < 2160 {
-		var objectCount int
-		filterOpts := metav1.ListOptions{}
-		if ev.Selector != nil {
-			filterOpts.LabelSelector = *ev.Selector
-		}
-
-		if ev.ObjectType == "node" {
-			if ev.Selector == nil {
-				filterOpts.LabelSelector = "karpenter.sh/provisioner-name"
-			}
-			nodeList, err := r.client.CoreV1().Nodes().List(ctx, filterOpts)
-			if err != nil {
-				return false, fmt.Errorf("getting nodes")
-			}
-			objectCount = len(nodeList.Items)
-		}
-		if ev.ObjectType == "pod" {
-			podList, err := r.client.CoreV1().Pods("").List(ctx, filterOpts)
-			if err != nil {
-				return false, fmt.Errorf("getting pods")
-			}
-			objectCount = len(podList.Items)
-		}
-		if valToCompare == objectCount {
-			r.log("Wait condition achieved, continuing with events after iteration %d", i)
-			return ptr.BoolValue(ev.StartMonitoring), nil
-		}
-		r.log(fmt.Sprintf("Observed count was %d, Target was %d, Sleeping for 10s (%dth iteration)", objectCount, valToCompare, i))
-		time.Sleep(10 * time.Second)
-		i++
+	var objectCount int
+	filterOpts := metav1.ListOptions{}
+	if ev.Selector != nil {
+		filterOpts.LabelSelector = *ev.Selector
 	}
-	return false, nil
+	// Max out at 6 hours. (3600 * 6 / 10 = 2160)
+	for i := 0; i < 2160; i++ {
+		select {
+		case <-ctx.Done():
+			return false, fmt.Errorf("interrupted, exiting wait")
+		default:
+			if ev.ObjectType == "node" {
+				if ev.Selector == nil {
+					filterOpts.LabelSelector = "karpenter.sh/provisioner-name"
+				}
+				nodeList, err := r.client.CoreV1().Nodes().List(ctx, filterOpts)
+				if err != nil {
+					if i == 2159 {
+						return false, fmt.Errorf("exiting wait, could not get nodes, %w", err)
+					}
+					r.log("failed getting nodes, %w", err)
+				}
+				objectCount = len(nodeList.Items)
+			} else if ev.ObjectType == "pod" {
+				podList, err := r.client.CoreV1().Pods("").List(ctx, filterOpts)
+				if err != nil {
+					if i == 2159 {
+						return false, fmt.Errorf("exiting wait, could not get pods, %w", err)
+					}
+					r.log("failed getting pods %w", err)
+				}
+				objectCount = len(podList.Items)
+			}
+			if valToCompare == objectCount {
+				r.log("Wait condition achieved, continuing with events after iteration %d", i)
+				return ptr.BoolValue(ev.StartMonitoring), nil
+			}
+			r.log(fmt.Sprintf("Observed count was %d, Target was %d, Sleeping for 10s (%dth iteration)", objectCount, valToCompare, i))
+			time.Sleep(10 * time.Second)
+		}
+	}
+	return false, fmt.Errorf("failed to achieve wait condition, %s", ev.String())
 }
 
 func createDeployment(dep Deployment) *appsv1.Deployment {
@@ -254,24 +261,26 @@ func (r *Runner) execute(ctx context.Context, ev Event) error {
 func (r *Runner) executeDeploymentEvent(ctx context.Context, ev DeploymentEvent) error {
 	r.log("scaling %s to %d replicas", ev.Deployment, ev.Replicas)
 
-	for try := 0; try < 100; try++ {
+	for try := 0; try < 250; try++ {
 		s, err := r.client.AppsV1().Deployments("default").GetScale(ctx, ev.deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			r.log("unable to get scale for %s, %s", ev.Deployment, err)
 		}
 
 		s.Spec.Replicas = int32(ev.Replicas)
-		_, err = r.client.AppsV1().Deployments("default").UpdateScale(context.Background(),
+		scale, err := r.client.AppsV1().Deployments("default").UpdateScale(context.Background(),
 			ev.deployment.Name, s, metav1.UpdateOptions{})
 		if err == nil {
+			r.log("successfully scaled to %d", scale.Spec.Replicas)
 			break
 		}
 		if err != nil {
-			if try == 99 {
+			if try == 249 {
 				return err
 			}
 			r.log("unable to scale %s, %s", ev.Deployment, err)
 		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	return nil
 }
