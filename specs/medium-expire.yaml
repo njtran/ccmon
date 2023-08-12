@@ -1,0 +1,84 @@
+# 500 nodes, 20 pods each
+# 10000 pods
+# 7500 pods, 375 nodes
+# 5000 pods, 250 nodes
+# 2500 pods, 125 nodes
+
+name: medium
+duration: 12h
+nodeSelector: karpenter.sh/provisioner-name
+deployments:
+  - name: inflate
+    cpu: 2300m # 20 pods per node
+    memory: 1G
+provisioners:
+  - name: od
+    consolidationEnabled: true
+    requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - c6a.12xlarge
+      - key: karpenter.k8s.aws/instance-cpu
+        operator: In
+        values:
+        - "48"
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - arm64
+        - amd64
+    cpuLimits: 100k
+    ttlSecondsUntilExpired: 86400
+
+events:
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 6000
+  - waitEvent:
+      value:
+        integer: 300
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 10000
+  - waitEvent:
+      startMonitoring: true
+      value:
+        integer: 500
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 7500
+  - waitEvent:
+      value:
+        integer: 375
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 5000
+  - waitEvent:
+      value:
+        integer: 250
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 2500
+  - waitEvent:
+      value:
+        integer: 125
+        operator: eq
+      objectType: node

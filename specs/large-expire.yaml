@@ -5,7 +5,7 @@
 # 5000 pods, 250 nodes
 
 name: large
-duration: 12h
+duration: 24h
 nodeSelector: karpenter.sh/provisioner-name
 deployments:
   - name: inflate
@@ -33,6 +33,7 @@ provisioners:
         - arm64
         - amd64
     cpuLimits: 100k
+    ttlSecondsUntilExpired: 86400
 
 events:
   - time: 0s

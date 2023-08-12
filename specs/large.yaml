@@ -1,0 +1,101 @@
+# 1000 nodes, 20 pods each
+# 20000 pods
+# 15000 pods, 750 nodes
+# 10000 pods, 500 nodes
+# 5000 pods, 250 nodes
+
+name: large
+duration: 24h
+nodeSelector: karpenter.sh/provisioner-name
+deployments:
+  - name: inflate
+    cpu: 2300m # 20 pods per node
+    memory: 1G
+provisioners:
+  - name: od
+    consolidationEnabled: true
+    requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - c6a.12xlarge
+      - key: karpenter.k8s.aws/instance-cpu
+        operator: In
+        values:
+        - "48"
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - arm64
+        - amd64
+    cpuLimits: 100k
+
+events:
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 6000
+  - waitEvent:
+      value:
+        integer: 300
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 12000
+  - waitEvent:
+      value:
+        integer: 600
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 18000
+  - waitEvent:
+      value:
+        integer: 900
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 20000
+  - waitEvent:
+      startMonitoring: true
+      value:
+        integer: 1000
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 15000
+  - waitEvent:
+      value:
+        integer: 750
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 10000
+  - waitEvent:
+      value:
+        integer: 500
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 5000
+  - waitEvent:
+      value:
+        integer: 250
+        operator: eq
+      objectType: node

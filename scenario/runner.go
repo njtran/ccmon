@@ -137,8 +137,8 @@ func (r *Runner) executeWait(ctx context.Context, ev WaitEvent) (bool, error) {
 	if ev.Selector != nil {
 		filterOpts.LabelSelector = *ev.Selector
 	}
-	// Max out at 6 hours. (3600 * 6 / 10 = 2160)
-	for i := 0; i < 2160; i++ {
+	// Max out at 6 hours for a wait. (3600 * 6 / 30 = 720)
+	for i := 0; i < 720; i++ {
 		select {
 		case <-ctx.Done():
 			return false, fmt.Errorf("interrupted, exiting wait")
@@ -169,8 +169,8 @@ func (r *Runner) executeWait(ctx context.Context, ev WaitEvent) (bool, error) {
 				r.log("Wait condition achieved, continuing with events after iteration %d", i)
 				return ptr.BoolValue(ev.StartMonitoring), nil
 			}
-			r.log(fmt.Sprintf("Observed count was %d, Target was %d, Sleeping for 10s (%dth iteration)", objectCount, valToCompare, i))
-			time.Sleep(10 * time.Second)
+			r.log(fmt.Sprintf("Observed count was %d, Target was %d, Sleeping for 30s (%dth iteration)", objectCount, valToCompare, i))
+			time.Sleep(30 * time.Second)
 		}
 	}
 	return false, fmt.Errorf("failed to achieve wait condition, %s", ev.String())

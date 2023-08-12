@@ -1,0 +1,134 @@
+# 2000 nodes, 20 pods each
+# 40000 pods
+# 30000 pods, 1500 nodes
+# 20000 pods, 1000 nodes
+# 10000 pods, 500 nodes
+
+name: 2xlarge
+duration: 24h
+nodeSelector: karpenter.sh/provisioner-name
+deployments:
+  - name: inflate
+    cpu: 2300m # 20 pods per node
+    memory: 1G
+provisioners:
+  - name: od
+    consolidationEnabled: true
+    requirements:
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: node.kubernetes.io/instance-type
+        operator: In
+        values:
+        - c6a.12xlarge
+      - key: karpenter.k8s.aws/instance-cpu
+        operator: In
+        values:
+        - "48"
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - arm64
+        - amd64
+    cpuLimits: 100k
+    ttlSecondsUntilExpired: 86400
+
+events:
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 6000
+  - waitEvent:
+      value:
+        integer: 300
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 12000
+  - waitEvent:
+      value:
+        integer: 600
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 18000
+  - waitEvent:
+      value:
+        integer: 900
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 24000
+  - waitEvent:
+      value:
+        integer: 1200
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 30000
+  - waitEvent:
+      value:
+        integer: 1500
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 36000
+  - waitEvent:
+      value:
+        integer: 1800
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 40000
+  - waitEvent:
+      value:
+        integer: 2000
+        operator: eq
+      objectType: node
+  - waitEvent:
+      startMonitoring: true
+      value:
+        integer: 2000
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 30000
+  - waitEvent:
+      value:
+        integer: 1500
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 20000
+  - waitEvent:
+      value:
+        integer: 1000
+        operator: eq
+      objectType: node
+  - time: 0s
+    deploymentEvent:
+      deployment: inflate
+      replicas: 10000
+  - waitEvent:
+      value:
+        integer: 500
+        operator: eq
+      objectType: node
