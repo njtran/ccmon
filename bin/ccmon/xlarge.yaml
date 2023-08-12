@@ -5,7 +5,7 @@
 # 7500 pods, nodes == 375
 
 name: xlarge
-duration: 12h
+duration: 24h
 nodeSelector: karpenter.sh/provisioner-name
 deployments:
   - name: inflate
@@ -44,7 +44,7 @@ events:
         integer: 300
         operator: eq
       objectType: node
-  - time: 5m
+  - time: 0s
     deploymentEvent:
       deployment: inflate
       replicas: 12000
@@ -53,7 +53,7 @@ events:
         integer: 600
         operator: eq
       objectType: node
-  - time: 10m
+  - time: 0s
     deploymentEvent:
       deployment: inflate
       replicas: 18000
@@ -62,7 +62,7 @@ events:
         integer: 900
         operator: eq
       objectType: node
-  - time: 15m
+  - time: 0s
     deploymentEvent:
       deployment: inflate
       replicas: 24000
@@ -71,7 +71,7 @@ events:
         integer: 1200
         operator: eq
       objectType: node
-  - time: 20m
+  - time: 0s
     deploymentEvent:
       deployment: inflate
       replicas: 30000
