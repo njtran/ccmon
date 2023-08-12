@@ -1,14 +1,14 @@
 echo "starting small"
-../ccmon ../bin/ccmon/small.yaml
+../ccmon ../specs/small.yaml
 
 echo "starting medium"
-../ccmon ../bin/ccmon/medium.yaml
+../ccmon ../specs/medium.yaml
 
 echo "starting large"
-../ccmon ../bin/ccmon/large.yaml
+../ccmon ../specs/large.yaml
 
 echo "starting xlarge"
-../ccmon ../bin/ccmon/xlarge.yaml
+../ccmon ../specs/xlarge.yaml
 
 echo "starting 2xlarge"
-../ccmon ../bin/ccmon/2xlarge.yaml
+../ccmon ../specs/2xlarge.yaml
