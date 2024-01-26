@@ -61,7 +61,7 @@ func NewCostMonitor(ctx context.Context, client *kubernetes.Clientset, name stri
 		pods:         map[string]*v1.Pod{},
 		nodePrices:   map[string]float64{},
 		log:          f,
-		start: 	      time.Now(),
+		start:        time.Now(),
 		csv:          csv.NewWriter(f),
 		pprov:        pprov,
 	}
@@ -227,6 +227,13 @@ func (c *CostMonitor) addNode(node *v1.Node) {
 	price, ok := c.pprov.OnDemandPrice(instanceType)
 	if ok {
 		c.nodePrices[node.Name] = price
+		// If we can't find the price, use a label that might have an override
+	} else if val, ok := node.Labels["eks-node-viewer/instance-price"]; ok {
+		if price, err := strconv.ParseFloat(val, 64); err == nil {
+			c.nodePrices[node.Name] = price
+		} else {
+			log.Printf("unable to find node price for %s/%s", node.Name, instanceType)
+		}
 	} else {
 		log.Printf("unable to find node price for %s/%s", node.Name, instanceType)
 	}
